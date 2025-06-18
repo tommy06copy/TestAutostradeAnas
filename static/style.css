@@ -1,0 +1,54 @@
+.modal {
+  display: none;
+  position: fixed;
+  z-index: 1000;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  background-color: rgba(0,0,0,0.5);
+}
+
+.modal-content {
+  background-color: #fff;
+  margin: 5% auto;
+  padding: 20px;
+  border-radius: 8px;
+  width: 600px;
+  max-width: 90%;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.close {
+  float: right;
+  font-size: 22px;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+canvas {
+  margin-top: 20px;
+  max-width: 100%;
+}
+
+.grafici-grid {
+  display: grid;
+  /*grid-template-columns: repeat(2, 1fr);*/
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 30px;
+  margin-top: 20px;
+}
+
+.grafici-grid canvas {
+  width: 100%;
+  height: 420px;
+}
+
+#graficoComparison {
+  margin-top: 40px;
+  width: 100%;
+  height: 400px;
+}

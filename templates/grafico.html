@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Grafico Storico</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f0f2f5;
+      padding: 20px;
+    }
+    h1 {
+      margin-bottom: 20px;
+    }
+    .grafico-card {
+      background: #fff;
+      border-radius: 10px;
+      padding: 20px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      position: relative;
+    }
+    .grafico-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+    .grafico-title {
+      font-weight: bold;
+      font-size: 16px;
+      color: #333;
+    }
+    .reset-btn {
+      background-color: #007bff;
+      color: #fff;
+      border: none;
+      padding: 5px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    .chart-container {
+      height: 300px;
+    }
+    canvas {
+      width: 100% !important;
+      height: 100% !important;
+    }
+  </style>
+</head>
+<body>
+  <h1 id="titolo-tratto">Grafico Storico</h1>
+  <div class="grafico-card">
+    <div class="grafico-header">
+      <span class="grafico-title" id="grafico-label">--</span>
+      <button class="reset-btn" onclick="resetZoom()">Reset Zoom</button>
+    </div>
+    <div class="chart-container">
+      <canvas id="chart"></canvas>
+    </div>
+  </div>
+
+  <script>
+    let chartRef = null;
+    function resetZoom() {
+      if (chartRef && chartRef.resetZoom) chartRef.resetZoom();
+    }
+
+    document.addEventListener("DOMContentLoaded", async () => {
+      const params    = new URLSearchParams(window.location.search);
+      const strada    = params.get("strada");
+      const tratto    = params.get("tratto");
+      const variabile = params.get("variabile");
+      const startDate = params.get("start_date");
+      const endDate   = params.get("end_date");
+      if (!strada||!tratto||!variabile||!startDate||!endDate) {
+        return alert("Parametri mancanti in URL");
+      }
+
+      const mapLabels = {
+        temperature: "Temperatura",
+        windspeed: "Velocità Vento",
+        precipitation: "Precipitazione",
+        precipitation_probability: "Probabilità (%)"
+      };
+      const mapUnits = {
+        temperature: "°C",
+        windspeed: "km/h",
+        precipitation: "mm",
+        precipitation_probability: "%"
+      };
+
+      document.getElementById("titolo-tratto").textContent =
+        `Grafico Storico - ${tratto}`;
+      document.getElementById("grafico-label").textContent =
+        `${mapLabels[variabile]} (${mapUnits[variabile]})`;
+
+      try {
+        const resp = await fetch(
+          `/api/historico_orario?` +
+          `variabile=${encodeURIComponent(variabile)}` +
+          `&strada=${encodeURIComponent(strada)}` +
+          `&start_date=${encodeURIComponent(startDate)}` +
+          `&end_date=${encodeURIComponent(endDate)}`
+        );
+        if (!resp.ok) throw new Error(`Status ${resp.status}`);
+        const js = await resp.json();
+
+        // times e dati:
+        const timesArr = js.times || [];
+        const dataArr  = js.data[stratto] || [];
+
+        // Costruisce etichette (locali) e valori allineati
+        const labels = timesArr.map(iso => {
+          if (!/Z|[+\-]\d\d:\d\d$/.test(iso)) iso += "Z";
+          return new Date(iso).toLocaleString("it-IT", {
+            day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit"
+          });
+        });
+        const values = timesArr.map(iso => {
+          const rec = dataArr.find(r => r.time === iso);
+          return rec ? rec.valore : null;
+        });
+
+        const ctx = document.getElementById("chart").getContext("2d");
+        chartRef = new Chart(ctx, {
+          type: "line",
+          data: {
+            labels,
+            datasets: [{
+              label: `${mapLabels[variabile]} (${mapUnits[variabile]})`,
+              data: values,
+              borderColor: "#007bff",
+              backgroundColor: "#007bff33",
+              tension: 0.3,
+              fill: true,
+              pointRadius: 3,
+              pointHoverRadius: 6
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              zoom: {
+                pan:  { enabled: true, mode: "x" },
+                zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: "x" }
+              }
+            },
+            scales: {
+              x: { ticks: { autoSkip: true, maxTicksLimit: 12 } },
+              y: { beginAtZero: true }
+            }
+          }
+        });
+      }
+      catch(e) {
+        console.error("Errore caricamento grafico:", e);
+        alert("Impossibile caricare il grafico.");
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Mappa Storico</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <style>
+    html, body { margin:0; padding:0; height:100%; overflow:hidden; font-family:sans-serif; }
+    #map { position:absolute; top:0; bottom:0; left:0; right:0; }
+    #btnPrevisionale { position:absolute; top:10px; left:80px; z-index:1001; }
+    #btnPrevisionale button,
+    #btnGrafici button { padding:6px 12px; font-size:14px; border:none; border-radius:4px; cursor:pointer; }
+    #btnPrevisionale button { background:#007bff; color:#fff; }
+    #btnGrafici { display:none; position:absolute; top:50px; left:80px; z-index:1001; }
+    #btnGrafici button { background:#28a745; color:#fff; }
+    #sidebar {
+      position:absolute; top:10px; right:10px; width:240px;
+      background:rgba(255,255,255,0.95); padding:12px; border-radius:6px;
+      box-shadow:0 0 8px rgba(0,0,0,0.2); z-index:1000;
+    }
+    #sidebar label { display:block; margin-top:8px; font-size:14px; }
+    #sidebar select, #sidebar input, #sidebar button { width:100%; margin-top:4px; padding:6px; font-size:14px; }
+    #legend {
+      position:absolute; bottom:140px; left:10px; z-index:1000;
+      background:rgba(255,255,255,0.95); padding:8px; border-radius:6px;
+      font-size:12px; box-shadow:0 0 8px rgba(0,0,0,0.2);
+      max-height:260px; overflow-y:auto;
+    }
+    #legend .title { font-weight:bold; margin-bottom:6px; }
+    #legend .step { display:flex; align-items:center; margin-bottom:4px; }
+    #legend .color-box { width:20px; height:12px; margin-right:6px; border:1px solid #ccc; }
+    #forecast-days {
+      position:absolute; bottom:60px; left:0; right:0; z-index:900;
+      display:flex; overflow-x:auto; padding:4px 6px;
+      background:rgba(0,0,0,0.7); gap:4px;
+    }
+    .hour-box {
+      background:#f0f0f0; color:#000; padding:4px 8px;
+      border-radius:4px; font-size:12px; white-space:nowrap; cursor:pointer;
+    }
+    .hour-box.active { background:orange; color:#000; font-weight:bold; }
+    #time-slider {
+      position:absolute; bottom:0; left:0; right:0; height:40px;
+      background:rgba(0,0,0,0.85); display:flex;
+      align-items:center; justify-content:center; color:#fff;
+      font-size:14px; z-index:900;
+    }
+    #loading {
+      position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+      background:rgba(255,255,255,0.9); padding:12px 20px;
+      border-radius:6px; box-shadow:0 0 8px rgba(0,0,0,0.3);
+      font-size:16px; display:none; z-index:1001;
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div id="btnPrevisionale">
+    <button onclick="location.href='/previsionale'">Torna al previsionale</button>
+  </div>
+  <div id="btnGrafici">
+    <button onclick="visualizzaGrafici()">Visualizza grafici</button>
+  </div>
+  <div id="sidebar">
+    <label>Strada</label>
+    <select id="stradaSelect">
+      <option value="A90">A90</option>
+      <option value="SS51">SS51</option>
+      <option value="SS675">SS675</option>
+    </select>
+    <label>Variabile</label>
+    <select id="variabileSelect">
+      <option value="temperature">Temperatura (°C)</option>
+      <option value="windspeed">Velocità vento (km/h)</option>
+      <option value="precipitation">Precipitazione (mm)</option>
+      <option value="precipitation_probability">Probabilità (%)</option>
+    </select>
+    <label>Data inizio</label>
+    <input type="date" id="startDate"/>
+    <label>Data fine</label>
+    <input type="date" id="endDate"/>
+    <button id="applyBtn">Carica storico</button>
+    <label>Seleziona tratto</label>
+    <select id="trattoSelect">
+      <option value="">-- scegli tratto --</option>
+    </select>
+  </div>
+  <div id="legend"><div class="title">Legenda</div></div>
+  <div id="forecast-days"></div>
+  <div id="time-slider"><span id="currentTime">--</span></div>
+  <div id="loading">Caricamento in corso…</div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    // debounce
+    function debounce(fn, ms) {
+      let t;
+      return (...args) => {
+        clearTimeout(t);
+        t = setTimeout(() => fn.apply(this, args), ms);
+      };
+    }
+
+    // scale identiche al previsionale
+    const scales = {
+      temperature: {
+        unit:'°C',
+        steps:Array.from({length:31},(_,i)=>-10 + i*2),
+        colors:[
+          '#00ffff','#00e5ff','#00ccff','#00b2ff','#0099ff','#007fff',
+          '#0066ff','#004cff','#0033ff','#0019ff','#0000ff','#1900ff',
+          '#3300ff','#4c00ff','#6600ff','#7f00ff','#9900ff','#b200ff',
+          '#cc00ff','#e500ff','#ff00ff','#ff00cc','#ff0099','#ff0066',
+          '#ff004c','#ff0033','#ff0019','#ff0000','#ff3300','#ff6600',
+          '#ff9900','#ffcc00'
+        ]
+      },
+      windspeed: {
+        unit:'km/h',
+        steps:[1,2,3,4,6,8,10,12,14,16,20,25,30,35,40,45,50,60,70,80,100,120,140,160,180],
+        colors:['#313695','#4575b4','#74add1','#abd9e9','#e0f3f8','#ffffbf',
+                '#fee090','#fdae61','#f46d43','#d73027','#a50026','#ffeda0',
+                '#fed976','#feb24c','#fd8d3c','#fc4e2a','#e31a1c','#bd0026',
+                '#800026','#4d004b','#2a0033','#0f0019','#000000','#111111','#222222']
+      },
+      precipitation: {
+        unit:'mm',
+        steps:[0.25,0.5,1,1.5,2,3,5,7,10,15,20,25,30],
+        colors:['#e0f7fa','#b2ebf2','#80deea','#4dd0e1','#26c6da','#00bcd4',
+                '#00acc1','#0097a7','#00838f','#006064','#004d40','#00332e','#001d1a']
+      },
+      precipitation_probability: {
+        unit:'%',
+        steps:[0,20,40,60,80,100],
+        colors:['#ffffe5','#fff7bc','#fee391','#fec44f','#fe9929','#cc4c02']
+      }
+    };
+
+    // bounding box
+    const bounds = {
+      A90:[[41.8,12.3],[42.0,12.6]],
+      SS51:[[46.3,12.2],[46.7,12.4]],
+      SS675:[[42.4,12.0],[42.6,12.3]]
+    };
+
+    // inizializza mappa
+    const renderer = L.canvas({ padding:0.5 });
+    const map = L.map('map',{ preferCanvas:true, renderer }).setView([42,12.5],7);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+      attribution:'© OpenStreetMap contributors'
+    }).addTo(map);
+
+    let segmentsData=null, polylines={}, times=[], allData={};
+    let currentStrada='A90', currentVar='temperature', selectedTratto=null;
+
+    async function fetchSegments(){
+      if(!segmentsData){
+        segmentsData = await fetch('/static/jsons/tratti_strada_allineati.json').then(r=>r.json());
+      }
+    }
+
+    function drawSegments(){
+      Object.values(polylines).forEach(p=>map.removeLayer(p));
+      polylines={};
+      segmentsData.forEach(t=>{
+        if(!t.nome.includes(currentStrada)) return;
+        const poly = L.polyline(t.punti.map(p=>[p.lat,p.lon]),{ renderer, color:'#888', weight:3 })
+          .addTo(map)
+          .bindTooltip(t.nome,{direction:'top',sticky:true})
+          .on('click',()=>selectTratto(t.nome,poly))
+          .on('mouseover',()=>poly.setStyle({weight:5}))
+          .on('mouseout',()=>poly.setStyle({weight:3}));
+        polylines[t.nome]=poly;
+      });
+      map.fitBounds(bounds[currentStrada]);
+      populateTrattoSelect();
+      selectedTratto=null;
+      document.getElementById('btnGrafici').style.display='none';
+    }
+
+    function populateTrattoSelect(){
+      const sel=document.getElementById('trattoSelect');
+      sel.innerHTML='<option value="">-- scegli tratto --</option>';
+      segmentsData.forEach(t=>{
+        if(t.nome.includes(currentStrada)){
+          sel.add(new Option(t.nome,t.nome));
+        }
+      });
+      sel.onchange=e=>selectTratto(e.target.value, polylines[e.target.value]);
+    }
+
+    function selectTratto(nome, poly){
+      if(!nome) return;
+      selectedTratto=nome;
+      map.fitBounds(poly.getBounds(),{padding:[20,20]});
+      document.getElementById('btnGrafici').style.display='block';
+    }
+
+    async function loadHistoric(){
+      const sd=document.getElementById('startDate').value;
+      const ed=document.getElementById('endDate').value;
+      if(!sd||!ed) return alert('Inserisci date valide');
+      currentVar=document.getElementById('variabileSelect').value;
+      currentStrada=document.getElementById('stradaSelect').value;
+      document.getElementById('loading').style.display='block';
+      const js=await fetch(
+        `/api/historico_orario?strada=${encodeURIComponent(currentStrada)}`+
+        `&variabile=${currentVar}`+
+        `&start_date=${sd}&end_date=${ed}`
+      ).then(r=>r.json());
+      times=js.times||[];
+      allData=js.data||{};
+      drawSegments();
+      renderLegend();
+      renderTimeline();
+      updateMap(0);
+      document.getElementById('loading').style.display='none';
+    }
+
+    function renderLegend(){
+      const lg=document.getElementById('legend');
+      lg.innerHTML=`<div class="title">${
+        document.getElementById('variabileSelect')
+                .selectedOptions[0].text
+      }</div>`;
+      const sc=scales[currentVar];
+      sc.steps.slice().reverse().forEach((v,i)=>{
+        const c=sc.colors.slice().reverse()[i];
+        const step=document.createElement('div'); step.className='step';
+        step.innerHTML=`<div class="color-box" style="background:${c}"></div>
+                       ${v} <small>${sc.unit}</small>`;
+        lg.appendChild(step);
+      });
+    }
+
+    function renderTimeline(){
+      const bar=document.getElementById('forecast-days');
+      bar.innerHTML='';
+      times.forEach((t,i)=>{
+        let iso=t; if(!/Z|[+\\-]\\d\\d:\\d\\d$/.test(iso)) iso+='Z';
+        const dt=new Date(iso);
+        const box=document.createElement('div');
+        box.className='hour-box';
+        box.textContent=dt.toLocaleString('it-IT',{day:'2-digit',hour:'2-digit',minute:'2-digit'});
+        box.onclick=()=>updateMap(i);
+        bar.appendChild(box);
+      });
+    }
+
+    function updateMap(idx){
+      document.querySelectorAll('.hour-box').forEach((b,i)=>b.classList.toggle('active',i===idx));
+      const ct=document.getElementById('currentTime');
+      let iso=times[idx]; if(!/Z|[+\\-]\\d\\d:\\d\\d$/.test(iso)) iso+='Z';
+      const dt=new Date(iso);
+      ct.textContent=dt.toLocaleString('it-IT',{
+        day:'2-digit',month:'2-digit',year:'numeric',
+        hour:'2-digit',minute:'2-digit'
+      });
+      Object.entries(polylines).forEach(([n,p])=>{
+        const rec=(allData[n]||[]).find(r=>r.time===times[idx]);
+        p.setStyle({ color: rec? getColor(rec.valore): '#ccc', weight:3 });
+      });
+    }
+
+    function getColor(v){
+      const sc=scales[currentVar];
+      for(let i=sc.steps.length-1;i>=0;i--){
+        if(v>=sc.steps[i]) return sc.colors[i];
+      }
+      return sc.colors[0];
+    }
+
+    function visualizzaGrafici(){
+      const sd=document.getElementById('startDate').value;
+      const ed=document.getElementById('endDate').value;
+      const strada=document.getElementById('stradaSelect').value;
+      const tratto=selectedTratto;
+      const variabile=currentVar;
+      if(!strada||!tratto) return alert('Seleziona prima strada e tratto');
+      window.location.href =
+        `/grafico.html?strada=${encodeURIComponent(strada)}`+
+        `&tratto=${encodeURIComponent(tratto)}`+
+        `&variabile=${encodeURIComponent(variabile)}`+
+        `&start_date=${encodeURIComponent(sd)}`+
+        `&end_date=${encodeURIComponent(ed)}`;
+    }
+
+    document.getElementById('applyBtn').onclick = loadHistoric;
+    document.getElementById('stradaSelect').onchange = async function(){
+      currentStrada=this.value;
+      await fetchSegments();
+      drawSegments();
+    };
+
+    (async()=>{
+      await fetchSegments();
+      drawSegments();
+    })();
+  </script>
+</body>
+</html>
